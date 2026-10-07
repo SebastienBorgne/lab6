@@ -81,7 +81,7 @@ Après le démarrage des trois nœuds :
 - **Datacenter :** `dc1`.
 - **Racks :** `cass4` dans `rack1`, `cass5` dans `rack2` et `cass6` dans `rack3`.
 
-Ces états sont à confirmer dans la sortie réelle de `nodetool status` ; pendant le démarrage, un nœud peut temporairement apparaître en `UJ` (*Up/Joining*).
+À confirmer via `nodetool status` (un nœud peut passer brièvement par `UJ` avant `UN`).
 
 ---
 
@@ -99,16 +99,9 @@ Vérifiez notamment :
 
 ### Question 2
 
-**Architecture :** les trois nœuds `cass4`, `cass5` et `cass6` appartiennent au cluster `tp2-cluster` et au datacenter `dc1`. Ils sont configurés dans trois racks distincts (`rack1`, `rack2`, `rack3`). Une fois le démarrage terminé, l'état attendu de chaque nœud est `UN`.
+**Architecture :** `cass4`, `cass5`, `cass6` appartiennent au cluster `tp2-cluster`, datacenter `dc1`, répartis sur `rack1`/`rack2`/`rack3`. État final attendu : `UN` partout.
 
-**Différences :**
-
-```text
-Cluster : ensemble de nœuds Cassandra qui coopèrent pour stocker et gérer les données.
-Datacenter : subdivision logique du cluster, souvent associée à une région ou à un site.
-Rack : subdivision logique du datacenter, utilisée notamment pour répartir les réplicas entre domaines de panne.
-Nœud : instance Cassandra individuelle participant au cluster.
-```
+**Différences :** cluster = ensemble de nœuds coopérants ; datacenter = subdivision logique (site/région) ; rack = subdivision du datacenter servant à isoler les domaines de panne pour la réplication ; nœud = instance Cassandra individuelle.
 
 ---
 
@@ -126,12 +119,9 @@ Vérifiez que :
 
 ### Question 3
 
-**Keyspace :** `birds`.  
-**Table principale :** `observations`. Le projet crée également des tables de requête (`observations_by_date`, `observations_by_species`, `observations_by_species_date` et `observations_by_common_name`).
+**Keyspace :** `birds`. **Table principale :** `observations` (`observation_id` bigint, `common_name`, `scientific_name`, `observed_on` date, `latitude`/`longitude` double ; clé primaire simple = `observation_id`, pas de clustering).
 
-Dans `observations`, les colonnes sont `observation_id` (`bigint`), `common_name` (`text`), `scientific_name` (`text`), `observed_on` (`date`), `latitude` (`double`) et `longitude` (`double`). La clé primaire est `observation_id` : c'est une clé de partition simple. Cette table n'a pas de clé de clustering.
-
-Les clés des tables de requête diffèrent : par exemple, `observations_by_date` a `observed_on` comme clé de partition et `observation_id` comme clé de clustering ; `observations_by_species` a `scientific_name` comme clé de partition et `observed_on`, puis `observation_id`, comme clés de clustering.
+Le projet ajoute des tables de requête dénormalisées pour d'autres accès : `observations_by_date` (partition `observed_on`, clustering `observation_id`), `observations_by_species` (partition `scientific_name`, clustering `observed_on`, `observation_id`), `observations_by_species_date` et `observations_by_common_name` suivent le même principe.
 
 ---
 
@@ -148,11 +138,11 @@ Replication Factor : 3
 
 ### Question 4
 
-**RF = 3** signifie que Cassandra conserve trois copies de chaque partition dans le datacenter configuré. Il s'agit de trois copies au total, pas d'une copie plus trois autres. Dans ce cluster, les copies sont réparties entre les nœuds, en tenant compte des racks.
+**RF = 3** = trois copies totales de chaque partition dans `dc1` (pas une copie + trois), réparties entre les nœuds en tenant compte des racks.
 
-Le **partitionnement** découpe et distribue les données selon la clé de partition et le token correspondant : il détermine où une partition est placée. La **réplication** crée des copies de cette partition sur d'autres nœuds, afin d'améliorer la disponibilité et la tolérance aux pannes.
+**Partitionnement** = placement d'une partition selon sa clé/token. **Réplication** = copies supplémentaires de cette partition sur d'autres nœuds, pour la disponibilité et la tolérance aux pannes.
 
-**Attention à la configuration du projet :** pour les tests du TP, le keyspace `birds` doit effectivement être configuré en `NetworkTopologyStrategy` avec `dc1: 3`. La configuration `.env` actuelle indique `CASSANDRA_REPLICATION_FACTOR=1` et le code crée un keyspace en `SimpleStrategy` si celui-ci n'existe pas. Il faut donc vérifier/corriger le keyspace avant les essais, par exemple avec :
+**⚠️ Piège du projet :** `.env` a `CASSANDRA_REPLICATION_FACTOR=1` et le code crée le keyspace en `SimpleStrategy`. Il faut corriger avant les tests :
 
 ```sql
 ALTER KEYSPACE birds
@@ -196,9 +186,9 @@ Nœud(s) responsable(s)
 Réplicas
 ```
 
-**Réponse :** Dans la table `birds.observations`, la clé primaire est `observation_id` ; elle est donc aussi la clé de partition. Cassandra applique sa fonction de hachage (Murmur3 par défaut) à cette valeur pour obtenir un token. Ce token situe la partition dans l’anneau et détermine la plage de tokens qui la contient. Le nœud propriétaire de cette plage est identifié comme premier responsable. Avec un facteur de réplication de 3 dans `dc1`, Cassandra stocke au total trois copies de la partition sur des nœuds du datacenter, en tenant compte de la topologie des racks. Les lectures et écritures peuvent alors être servies par ces réplicas selon le niveau de cohérence demandé.
+**Réponse :** `observation_id` (clé de partition) → hachage Murmur3 → token → nœud propriétaire de la plage de tokens → avec RF=3 dans `dc1`, trois réplicas au total répartis en tenant compte des racks. Lectures/écritures sont servies par ces réplicas selon le niveau de cohérence demandé.
 
-> Pour les tables secondaires, la clé de partition dépend de leur définition : par exemple `observations_by_date` est partitionnée par `observed_on`, tandis que `observations_by_species` l’est par `scientific_name`.
+> Les tables secondaires ont d'autres clés de partition : `observed_on` pour `observations_by_date`, `scientific_name` pour `observations_by_species`.
 
 ---
 
@@ -230,7 +220,7 @@ Comparez les trois niveaux :
 | QUORUM | 2 |
 | ALL | 3 |
 
-**Réponse :** `ONE` demande une réponse d'au moins un réplica : c'est le niveau le plus disponible et le plus rapide, mais la réponse peut ne pas refléter immédiatement une écriture récente si les réplicas ne sont pas encore synchronisés. `QUORUM` demande une majorité, soit deux réplicas sur trois ; il offre un compromis entre disponibilité et cohérence. `ALL` demande les trois réplicas : il fournit la vérification la plus stricte, mais échoue dès qu'un réplica est indisponible. Avec des lectures et écritures toutes deux au niveau `QUORUM`, les ensembles se recoupent, ce qui favorise la lecture de la dernière valeur écrite.
+**Réponse :** `ONE` = 1 réplica répond : le plus rapide et disponible, mais peut renvoyer une valeur pas encore à jour. `QUORUM` = majorité (2/3) : compromis disponibilité/cohérence. `ALL` = les 3 réplicas : le plus strict, échoue dès qu'un nœud manque. En lecture **et** écriture au niveau `QUORUM`, les ensembles de réplicas se recoupent toujours, ce qui garantit de lire la dernière valeur écrite.
 
 ---
 
@@ -256,7 +246,7 @@ cass6 → indisponible
 
 ### Question 7
 
-**Réponse attendue :** `nodetool status` indique deux nœuds `UN` (`cass4` et `cass5`) et un nœud indisponible (`cass6`, normalement signalé `DN`). Il reste donc deux nœuds disponibles sur trois. Le résultat exact doit être confirmé avec la commande, car Cassandra peut mettre un court délai à détecter la panne.
+**Réponse attendue :** `nodetool status` : `cass4`/`cass5` en `UN`, `cass6` en `DN` (down). 2 nœuds disponibles sur 3 (détection pouvant prendre un court délai).
 
 ---
 
@@ -276,7 +266,7 @@ Utilisez les **mêmes données métier** que précédemment afin de comparer les
 
 ### Question 8
 
-**Réponse attendue avec RF = 3 :** les lectures `ONE` et `QUORUM` peuvent réussir avec deux nœuds disponibles : elles nécessitent respectivement une et deux réponses. La lecture `ALL` échoue, car elle exige les trois réplicas et `cass6` est arrêté. `RF = 3` laisse donc deux copies accessibles pendant cette panne, mais ne permet pas de satisfaire une opération qui exige les trois copies. Il faut exécuter les tests avec les mêmes lignes et préciser que les résultats dépendent aussi du fait que ces partitions possèdent bien leurs réplicas sur les nœuds attendus.
+**Réponse attendue avec RF = 3 :** `ONE` et `QUORUM` réussissent (1 et 2 réponses suffisent avec les 2 nœuds restants). `ALL` échoue (`UnavailableException`), car les 3 réplicas sont exigés et `cass6` est arrêté.
 
 Le principe est :
 
@@ -300,7 +290,7 @@ Observez à nouveau l'état des trois nœuds.
 
 ### Question 9
 
-**Réponse attendue :** oui, `cass6` rejoint à nouveau le cluster. Pendant son démarrage, il peut apparaître temporairement `UJ` (*Up/Joining*), puis passer à `UN` (*Up/Normal*) lorsque le nœud a rejoint le ring. Le volume Docker persistant permet au nœud de retrouver ses données locales ; Cassandra peut ensuite rattraper les écritures manquées selon les mécanismes de hints et de réparation.
+**Réponse attendue :** oui, `cass6` rejoint le cluster (`UJ` puis `UN`). Le volume Docker persistant lui conserve ses données locales ; les écritures manquées sont rattrapées via hints/réparation.
 
 ---
 
@@ -314,7 +304,7 @@ L'objectif est de constater que les données restent accessibles et que le clust
 
 ### Question 10
 
-chaque ligne appartient à une partition déterminée par sa clé de partition. Avec RF = 3, Cassandra conserve trois réplicas de cette partition. Lorsque `cass6` tombe en panne, les autres nœuds peuvent encore servir les lectures si le niveau de cohérence demandé est satisfait. À son redémarrage, `cass6` rejoint le cluster et revient normalement à l'état `UN`; les données redeviennent disponibles auprès de l'ensemble des réplicas. Il faut vérifier les données avec des lectures et confirmer l'état des nœuds plutôt que supposer qu'une synchronisation complète est instantanée.
+chaque ligne est répliquée 3 fois (RF=3). Pendant la panne de `cass6`, les 2 autres réplicas servent les lectures si le CL est satisfait. Au redémarrage, `cass6` revient en `UN` et les données restent accessibles sur l'ensemble des réplicas — à confirmer par des lectures plutôt que supposer une synchronisation instantanée.
 
 Votre réponse doit expliquer simplement :
 
@@ -360,7 +350,7 @@ Vérification des données
 
 ### Question 11
 
-**Réponse :** la réplication conserve plusieurs copies d'une même partition sur des nœuds différents. Si un nœud tombe en panne, les autres réplicas peuvent continuer à répondre aux requêtes dont le niveau de cohérence peut être satisfait. La disponibilité dépend donc du nombre de réplicas encore joignables et du `Consistency Level` : avec RF = 3 et un seul nœud arrêté, `ONE` et `QUORUM` restent possibles, tandis que `ALL` ne l'est plus. La réplication améliore la tolérance aux pannes, mais ne garantit pas que tous les niveaux de cohérence réussiront pendant une panne.
+**Réponse :** la réplication maintient plusieurs copies d'une partition sur des nœuds différents, ce qui laisse les requêtes aboutir tant que le `Consistency Level` demandé est satisfaisable. Avec RF=3 et un nœud arrêté, `ONE` et `QUORUM` restent possibles, `ALL` non : la tolérance aux pannes dépend du RF, du placement des réplicas et du CL choisi — pas d'un seul de ces facteurs.
 
 ---
 
