@@ -1,0 +1,89 @@
+services:
+  cass4:
+    image: cassandra:4.1
+    container_name: cass4
+    hostname: cass4
+    networks:
+      - cass-net
+    ports:
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: tp2-cluster
+      CASSANDRA_SEEDS: cass4
+      CASSANDRA_DC: dc1
+      CASSANDRA_RACK: rack1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      CASSANDRA_NUM_TOKENS: 16
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    volumes:
+      - cass4_data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "nodetool status | awk '$1 == \"UN\" { count++ } END { exit count < 1 }'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 90s
+
+  cass5:
+    image: cassandra:4.1
+    container_name: cass5
+    hostname: cass5
+    networks:
+      - cass-net
+    depends_on:
+      cass4:
+        condition: service_healthy
+    environment:
+      CASSANDRA_CLUSTER_NAME: tp2-cluster
+      CASSANDRA_SEEDS: cass4
+      CASSANDRA_DC: dc1
+      CASSANDRA_RACK: rack2
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      CASSANDRA_NUM_TOKENS: 16
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    volumes:
+      - cass5_data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "nodetool status | awk '$1 == \"UN\" { count++ } END { exit count < 2 }'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 90s
+
+  cass6:
+    image: cassandra:4.1
+    container_name: cass6
+    hostname: cass6
+    networks:
+      - cass-net
+    depends_on:
+      cass5:
+        condition: service_healthy
+    environment:
+      CASSANDRA_CLUSTER_NAME: tp2-cluster
+      CASSANDRA_SEEDS: cass4
+      CASSANDRA_DC: dc1
+      CASSANDRA_RACK: rack3
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      CASSANDRA_NUM_TOKENS: 16
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    volumes:
+      - cass6_data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "nodetool status | awk '$1 == \"UN\" { count++ } END { exit count < 3 }'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 90s
+
+networks:
+  cass-net:
+    name: cass-net
+
+volumes:
+  cass4_data:
+  cass5_data:
+  cass6_data:
